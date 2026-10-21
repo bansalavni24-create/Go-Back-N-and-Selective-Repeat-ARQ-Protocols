@@ -1,140 +1,68 @@
-# Step-by-step demo: packets are dropped ON PURPOSE so you can watch recovery.
-MESSAGE = "NETWORKS"       # each letter is one packet
-WINDOW = 4
-DELAY = 2                  # ticks for a packet to cross the channel
-TIMEOUT = 6                # ticks to wait before assuming loss
-DROP_THESE = {2, 5}        # packets lost the FIRST time they are sent
+from stopwait import run_stop_and_wait
+from gbn import run_go_back_n
+from sr import run_selective_repeat
+
+# ---- Settings that can change ----
+WINDOW = 3          # window size for Go-Back-N and Selective Repeat
+EVERY_KTH = 5       # every Kth frame the sender transmits is lost
+DELAY = 2           # ticks for a frame to cross the channel
+TIMEOUT = 6         # ticks to wait for an ACK before resending
+MAX_LETTERS = 20    # longest message allowed (keeps the printout readable)
+
+# Smallest sequence-number range that works for each protocol
+MODULO_SW = 2                 # Stop-and-Wait: 0, 1, 0, 1 ...
+MODULO_GBN = WINDOW + 1       # Go-Back-N: window + 1
+MODULO_SR = 2 * WINDOW        # Selective Repeat: 2 x window
 
 
-def go_back_n_demo():
-    total = len(MESSAGE)
-    dropped = set()
-    base = next_seq = expected = 0
-    timer_start = None
-    data_road, ack_road, delivered = [], [], []
-    time = 0
-    print("=== GO-BACK-N DEMO ===")
-    print(f"Message: {MESSAGE}   Window: {WINDOW}   Packets that will be lost: {sorted(DROP_THESE)}\n")
+def main():
+    message = input("Type the message you want to send: ").strip()
+    if message == "":
+        message = "NETWORKS"
+        print("No message typed, using NETWORKS")
+    if len(message) > MAX_LETTERS:
+        message = message[:MAX_LETTERS]
+        print(f"Too long, using the first {MAX_LETTERS} letters: {message}")
 
-    while base < total:
-        time += 1
+    print(f"\nMessage: {message}   ({len(message)} letters = {len(message)} frames)")
+    print(f"Every {EVERY_KTH}th frame sent is lost. No ACK is lost.")
+    print(f"Window: {WINDOW}   Delay: {DELAY} ticks   Timeout: {TIMEOUT} ticks\n")
 
-        # 1. Sender collects ACKs
-        for a in [a for a in ack_road if a[0] == time]:
-            ack_road.remove(a)
-            if a[1] > base:
-                base = a[1]
-                if next_seq < base:
-                    next_seq = base
-                timer_start = time if base < next_seq else None
-                print(f"t={time:2d}  Sender   : ACK {a[1]} received -> window slides to [{base}..{base + WINDOW - 1}]")
-            else:
-                print(f"t={time:2d}  Sender   : ACK {a[1]} received (old ACK, nothing new)")
+    common = dict(delay=DELAY, timeout=TIMEOUT, every_kth=EVERY_KTH, log=True,
+                  max_ticks=300 + 30 * len(message))
+    results = []
 
-        # 2. Timeout -> go back
-        if timer_start is not None and time - timer_start >= TIMEOUT:
-            print(f"t={time:2d}  Sender   : TIMEOUT! Going back to packet {base} and resending from there")
-            next_seq = base
-            timer_start = None
+    print("=" * 70)
+    print(f"STOP-AND-WAIT  (one frame at a time, sequence numbers modulo-{MODULO_SW}: 0,1,0,1...)")
+    print("=" * 70)
+    results.append(("Stop-and-Wait", run_stop_and_wait(message, modulo=MODULO_SW, **common)))
+    input("\nPress Enter to see Go-Back-N on the same lost frames...")
 
-        # 3. Send one packet
-        if next_seq < base + WINDOW and next_seq < total:
-            if base == next_seq:
-                timer_start = time
-            if next_seq in DROP_THESE and next_seq not in dropped:
-                dropped.add(next_seq)
-                print(f"t={time:2d}  Sender   : sends packet {next_seq} ({MESSAGE[next_seq]})  ---> LOST in channel")
-            else:
-                print(f"t={time:2d}  Sender   : sends packet {next_seq} ({MESSAGE[next_seq]})")
-                data_road.append((time + DELAY, next_seq))
-            next_seq += 1
+    print("\n" + "=" * 70)
+    print(f"GO-BACK-N  (window {WINDOW}, sequence numbers modulo-{MODULO_GBN})")
+    print("=" * 70)
+    results.append(("Go-Back-N", run_go_back_n(message, WINDOW, modulo=MODULO_GBN, **common)))
+    input("\nPress Enter to see Selective Repeat on the same lost frames...")
 
-        # 4. Receiver
-        for d in [d for d in data_road if d[0] == time]:
-            data_road.remove(d)
-            seq = d[1]
-            if seq == expected:
-                delivered.append(MESSAGE[seq])
-                expected += 1
-                print(f"t={time:2d}  Receiver : got packet {seq} -> accepted. Message so far: {''.join(delivered)}")
-            else:
-                print(f"t={time:2d}  Receiver : got packet {seq} but wants {expected} -> DISCARDED")
-            ack_road.append((time + DELAY, expected))
-            print(f"t={time:2d}  Receiver : sends ACK {expected} (means: I want packet {expected} next)")
+    print("\n" + "=" * 70)
+    print(f"SELECTIVE REPEAT  (window {WINDOW}, sequence numbers modulo-{MODULO_SR})")
+    print("=" * 70)
+    results.append(("Selective Repeat", run_selective_repeat(message, WINDOW, modulo=MODULO_SR, **common)))
 
-    sent_note = "".join(delivered)
-    print(f"\nDONE at t={time}. Receiver got: {sent_note}  ->  {'CORRECT' if sent_note == MESSAGE else 'WRONG'}\n")
-
-
-def selective_repeat_demo():
-    total = len(MESSAGE)
-    dropped = set()
-    base = next_seq = rcv_base = 0
-    acked, received, sent_at = set(), set(), {}
-    data_road, ack_road, delivered = [], [], []
-    time = 0
-    print("=== SELECTIVE REPEAT DEMO ===")
-    print(f"Message: {MESSAGE}   Window: {WINDOW}   Packets that will be lost: {sorted(DROP_THESE)}\n")
-
-    def transmit(seq, note=""):
-        sent_at[seq] = time
-        if seq in DROP_THESE and seq not in dropped:
-            dropped.add(seq)
-            print(f"t={time:2d}  Sender   : sends packet {seq} ({MESSAGE[seq]}){note}  ---> LOST in channel")
+    print("\n" + "=" * 70)
+    print("SUMMARY")
+    print("=" * 70)
+    print(f"{'Protocol':<18}{'Frames sent':>12}{'Time (ticks)':>14}   Result")
+    for name, r in results:
+        if not r["finished"]:
+            result = "never finished"
+        elif r["correct"]:
+            result = "message correct"
         else:
-            print(f"t={time:2d}  Sender   : sends packet {seq} ({MESSAGE[seq]}){note}")
-            data_road.append((time + DELAY, seq))
-
-    while base < total:
-        time += 1
-
-        # 1. Sender collects ACKs (one per packet)
-        for a in [a for a in ack_road if a[0] == time]:
-            ack_road.remove(a)
-            acked.add(a[1])
-            old = base
-            while base in acked:
-                base += 1
-            if base != old:
-                print(f"t={time:2d}  Sender   : ACK {a[1]} received -> window slides to [{base}..{base + WINDOW - 1}]")
-            else:
-                print(f"t={time:2d}  Sender   : ACK {a[1]} received (window cannot slide yet, packet {base} still missing)")
-
-        # 2. Send one packet: resend a timed-out one, else a new one
-        resend = None
-        for seq in range(base, next_seq):
-            if seq not in acked and time - sent_at[seq] >= TIMEOUT:
-                resend = seq
-                break
-        if resend is not None:
-            print(f"t={time:2d}  Sender   : TIMEOUT for packet {resend}! Resending ONLY packet {resend}")
-            transmit(resend)
-        elif next_seq < base + WINDOW and next_seq < total:
-            transmit(next_seq)
-            next_seq += 1
-
-        # 3. Receiver
-        for d in [d for d in data_road if d[0] == time]:
-            data_road.remove(d)
-            seq = d[1]
-            if seq >= rcv_base:
-                received.add(seq)
-            while rcv_base in received:
-                delivered.append(MESSAGE[rcv_base])
-                rcv_base += 1
-            if seq >= rcv_base:
-                print(f"t={time:2d}  Receiver : got packet {seq} out of order -> STORED. Message so far: {''.join(delivered)}")
-            else:
-                print(f"t={time:2d}  Receiver : got packet {seq} -> accepted. Message so far: {''.join(delivered)}")
-            ack_road.append((time + DELAY, seq))
-            print(f"t={time:2d}  Receiver : sends ACK {seq} (means: I got packet {seq})")
-
-    result = "".join(delivered)
-    print(f"\nDONE at t={time}. Receiver got: {result}  ->  {'CORRECT' if result == MESSAGE else 'WRONG'}\n")
+            result = "message WRONG"
+        print(f"{name:<18}{r['sent']:>12}{r['time']:>14}   {result}")
+    print(f"\nFrames needed without any loss: {len(message)}")
 
 
 if __name__ == "__main__":
-    go_back_n_demo()
-    input("Press Enter to see Selective Repeat on the same losses...")
-    print()
-    selective_repeat_demo()
+    main()
