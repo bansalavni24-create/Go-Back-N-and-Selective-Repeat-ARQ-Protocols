@@ -1,0 +1,19 @@
+# Secrets (most important)
+.env
+.env.*
+!.env.example
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+venv/
+.venv/
+__pycache__/
+*.pyc
+db.sqlite3
