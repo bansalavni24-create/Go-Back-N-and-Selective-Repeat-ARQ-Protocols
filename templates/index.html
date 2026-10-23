@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARQ Protocol Dashboard</title>
+<style>
+  :root{--bg:#f5f6fa;--card:#fff;--text:#1d2433;--muted:#667085;--line:#e4e7ec;
+    --sw:#7a5af8;--gbn:#e8590c;--sr:#0b8a6a;--ok:#0b8a6a;--bad:#d92d20;--warn:#b54708;--accent:#2e5bff}
+  @media(prefers-color-scheme:dark){:root{--bg:#12151c;--card:#1b2030;--text:#e8ebf3;--muted:#9aa3b8;--line:#2b3247;
+    --sw:#a48bff;--gbn:#ff8a4c;--sr:#35d0a6;--ok:#35d0a6;--bad:#ff6b5e;--warn:#f5b04c;--accent:#7b9bff}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
+  header{padding:22px 24px 0;max-width:1100px;margin:0 auto}
+  h1{margin:0;font-size:22px} header p{margin:4px 0 0;color:var(--muted)}
+  nav{display:flex;gap:6px;max-width:1100px;margin:16px auto 0;padding:0 24px;border-bottom:1px solid var(--line)}
+  nav button{background:none;border:0;padding:10px 16px;font:inherit;color:var(--muted);cursor:pointer;border-bottom:3px solid transparent}
+  nav button.on{color:var(--accent);border-color:var(--accent);font-weight:600}
+  main{max-width:1100px;margin:0 auto;padding:20px 24px 60px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:16px}
+  .card h2{margin:0 0 10px;font-size:16px}
+  .row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+  label{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:4px}
+  input,select{font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)}
+  input[type=number]{width:80px} #msg{width:220px}
+  .go{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:9px 20px;font:inherit;font-weight:600;cursor:pointer}
+  .go:disabled{opacity:.5}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:800px){.grid3{grid-template-columns:1fr}}
+  .stat{border-top:4px solid var(--c);}
+  .stat h3{margin:0;font-size:15px;color:var(--c)}
+  .big{display:flex;gap:22px;margin:10px 0 6px}
+  .big div span{display:block;font-size:26px;font-weight:700}
+  .big div small{color:var(--muted)}
+  .tag{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600}
+  .t-correct,.t-ok{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
+  .t-WRONG,.t-bad,.t-stuck,.t-never{background:color-mix(in srgb,var(--bad) 16%,transparent);color:var(--bad)}
+  .bar{height:10px;border-radius:5px;background:var(--line);overflow:hidden;margin-top:6px}
+  .bar i{display:block;height:100%;background:var(--c)}
+  .tabs{display:flex;gap:8px;margin-bottom:10px}
+  .tabs button{border:1px solid var(--line);background:var(--bg);color:var(--text);padding:5px 14px;border-radius:999px;cursor:pointer;font:inherit}
+  .tabs button.on{background:var(--c,var(--accent));color:#fff;border-color:transparent}
+  .log{font:12.5px/1.55 ui-monospace,Consolas,monospace;max-height:380px;overflow:auto;background:var(--bg);border-radius:8px;padding:10px}
+  .log div{white-space:pre-wrap;padding:0 4px}
+  .log .lost{color:var(--bad);font-weight:600} .log .to{color:var(--warn);font-weight:600}
+  .log .rcv{color:var(--muted)} .log .done{font-weight:700;margin-top:6px}
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left}
+  th{color:var(--muted);font-weight:600;font-size:12px}
+  td.c{text-align:center}
+  .note{color:var(--muted);font-size:13px;margin:8px 0 0}
+  .charts{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:800px){.charts{grid-template-columns:1fr}}
+  .wide{grid-column:1/-1} .wide svg{max-width:640px;display:block;margin:0 auto}
+  .legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12.5px;color:var(--muted);justify-content:center}
+  .legend i{display:inline-block;width:14px;height:4px;border-radius:2px;margin-right:6px;vertical-align:middle}
+  .hidden{display:none}
+  .msg{padding:30px;text-align:center;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Performance Analysis of Go-Back-N and Selective Repeat ARQ</h1>
+  <p>Type a message, see how all three protocols send it over a lossy channel.</p>
+</header>
+<nav>
+  <button class="on" data-tab="demo">Live Demo</button>
+  <button data-tab="num">Sequence Numbering</button>
+  <button data-tab="graphs">Graphs</button>
+</nav>
+<main>
+
+<section id="demo">
+  <div class="card">
+    <div class="row">
+      <label>Your message (max 20 letters)<input id="msg" value="NETWORKS" maxlength="20"></label>
+      <label>Window size<input id="window" type="number" value="3" min="1" max="8"></label>
+      <label>Every k-th frame lost (0 = none)<input id="kth" type="number" value="4" min="0" max="20"></label>
+      <label>Every k-th ACK lost (0 = none)<input id="ackkth" type="number" value="0" min="0" max="20"></label>
+      <label>Delay (ticks)<input id="delay" type="number" value="2" min="1" max="10"></label>
+      <label>Timeout (ticks)<input id="timeout" type="number" value="6" min="2" max="40"></label>
+      <label>Sequence numbers
+        <select id="scheme">
+          <option value="safe">Safe modulo (recommended)</option>
+          <option value="mod2">Modulo-2 (0,1,0,1...)</option>
+          <option value="not_told">Not told (0,1,2,3...)</option>
+          <option value="mod1">Modulo-1 (0,0,0,0...)</option>
+        </select></label>
+      <button class="go" id="rundemo">Send message</button>
+    </div>
+  </div>
+  <div id="demoOut" class="msg">Press "Send message" to start.</div>
+</section>
+
+<section id="num" class="hidden">
+  <div class="card">
+    <div class="row">
+      <label>Your message<input id="nmsg" value="NETWORKS" maxlength="20"></label>
+      <button class="go" id="runnum">Compare numbering</button>
+    </div>
+    <p class="note">Window 3. Every 4th frame is lost. In the second table every 3rd ACK is lost too.</p>
+  </div>
+  <div id="numOut" class="msg">Press "Compare numbering" to start.</div>
+</section>
+
+<section id="graphs" class="hidden">
+  <div class="card"><button class="go" id="rungraphs">Draw graphs</button>
+    <span class="note">Takes a few seconds: it runs hundreds of simulations.</span></div>
+  <div id="graphOut" class="msg">Press "Draw graphs" to start.</div>
+</section>
+
+</main>
+<script>
+const COLORS = {"Stop-and-Wait":"var(--sw)","Go-Back-N":"var(--gbn)","Selective Repeat":"var(--sr)"};
+const PROTOS = Object.keys(COLORS);
+const $ = id => document.getElementById(id);
+const esc = s => s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v.slice(4,-1)).trim();
+
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
+  ["demo","num","graphs"].forEach(t => $(t).classList.toggle("hidden", t !== b.dataset.tab));
+});
+
+async function post(url, body){
+  const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+  return r.json();
+}
+
+/* ---------- Live demo ---------- */
+$("rundemo").onclick = async () => {
+  const btn = $("rundemo"); btn.disabled = true;
+  const data = await post("/api/demo", {message:$("msg").value, window:$("window").value, every_kth:$("kth").value,
+    ack_every_kth:$("ackkth").value, delay:$("delay").value, timeout:$("timeout").value, scheme:$("scheme").value});
+  btn.disabled = false;
+  const maxTime = Math.max(...data.results.map(r => r.time));
+  let html = `<div class="grid3">`;
+  for (const r of data.results){
+    const c = COLORS[r.protocol];
+    const tag = !r.finished ? `<span class="tag t-never">never finishes</span>`
+      : r.correct ? `<span class="tag t-correct">correct</span>` : `<span class="tag t-WRONG">WRONG</span>`;
+    html += `<div class="card stat" style="--c:${c}"><h3>${r.protocol}</h3>
+      <div class="big"><div><span>${r.sent}</span><small>frames sent</small></div>
+      <div><span>${r.time}</span><small>ticks</small></div></div>
+      ${tag} <small class="note">modulo ${r.modulo === null ? "not told" : r.modulo}</small>
+      <div class="bar"><i style="width:${100*r.time/maxTime}%"></i></div>
+      <p class="note">Receiver got: <b>${esc(r.delivered || "")}</b></p></div>`;
+  }
+  html += `</div><div class="card"><h2>Step-by-step trace</h2><div class="tabs" id="logTabs">`;
+  data.results.forEach((r,i) => html += `<button data-i="${i}" style="--c:${COLORS[r.protocol]}" class="${i===1?"on":""}">${r.protocol}</button>`);
+  html += `</div><div class="log" id="log"></div>
+    <p class="note">Red = frame lost in channel. Orange = timeout. Grey = receiver actions.</p></div>`;
+  $("demoOut").className = ""; $("demoOut").innerHTML = html;
+  const show = i => {
+    $("log").innerHTML = data.results[i].log.map(l => {
+      let cl = l.includes("LOST") ? "lost" : l.includes("TIMEOUT") ? "to" : l.includes("Receiver") ? "rcv" : l.startsWith("DONE")||l.startsWith("GAVE") ? "done" : "";
+      return `<div class="${cl}">${esc(l)}</div>`; }).join("");
+    document.querySelectorAll("#logTabs button").forEach(b => b.classList.toggle("on", +b.dataset.i === i));
+  };
+  document.querySelectorAll("#logTabs button").forEach(b => b.onclick = () => show(+b.dataset.i));
+  show(1);
+};
+
+/* ---------- Numbering ---------- */
+const tag = s => { const k = s === "never finishes" ? "never" : s; return `<span class="tag t-${k}">${s}</span>`; };
+function partTable(rows){
+  let h = `<table><tr><th>Numbering</th>${PROTOS.map(p=>`<th>${p}</th>`).join("")}</tr>`;
+  for (const row of rows){
+    h += `<tr><td>${row.name}</td>` + row.cells.map(c =>
+      `<td>${tag(c.status)} <small class="note">${c.sent ? c.sent+" frames" : ""}</small>${c.status!=="correct"?`<div class="note">got ${esc(c.got)}</div>`:""}</td>`).join("") + `</tr>`;
+  }
+  return h + `</table>`;
+}
+function sweepTable(rows, total){
+  let h = `<table><tr><th>Numbering</th>${PROTOS.map(p=>`<th>${p}</th>`).join("")}</tr>`;
+  for (const row of rows){
+    h += `<tr><td>${row.name}</td>` + row.cells.map(c => {
+      const pct = 100*c.good/total;
+      return `<td><b>${c.good}</b> of ${total} correct${c.stuck?` <span class="tag t-bad">${c.stuck} stuck</span>`:""}
+        <div class="bar" style="--c:var(--ok)"><i style="width:${pct}%"></i></div></td>`; }).join("") + `</tr>`;
+  }
+  return h + `</table>`;
+}
+$("runnum").onclick = async () => {
+  const btn = $("runnum"); btn.disabled = true;
+  const d = await post("/api/numbering", {message:$("nmsg").value});
+  btn.disabled = false;
+  let h = `<div class="card"><h2>1. Only frames are lost (like the exam)</h2>${partTable(d.frames_only)}</div>
+    <div class="card"><h2>2. Frames and ACKs are lost</h2>${partTable(d.frames_and_acks)}</div>
+    <div class="card"><h2>3. Which modulo is enough?</h2><table><tr><th>Modulo</th>${[1,2,3,4,5,6,7,8].map(m=>`<th>${m}</th>`).join("")}</tr>`;
+  for (const r of d.modulo_table)
+    h += `<tr><td>${r.protocol}</td>` + r.cells.map(c => `<td class="c"><span class="tag t-${c}">${c}</span></td>`).join("") + `</tr>`;
+  h += `</table><p class="note">Safe rule: Stop-and-Wait needs 2. Go-Back-N needs window+1 = ${d.safe[1]}. Selective Repeat needs 2 x window = ${d.safe[2]}.
+    A smaller number can work by luck on one message, so rely on the rule.</p></div>
+    <div class="card"><h2>4. Different message sizes and lost frames (${d.sweep_total} tests per cell)</h2>
+    <p class="note">Sizes 4,6,8,10,12,16,20 and every 3rd,4th,5th,6th,8th frame lost.</p>
+    <h3>Only frames lost</h3>${sweepTable(d.sweep_frames_only, d.sweep_total)}
+    <h3>Frames and ACKs lost</h3>${sweepTable(d.sweep_frames_and_acks, d.sweep_total)}</div>`;
+  $("numOut").className = ""; $("numOut").innerHTML = h;
+};
+
+/* ---------- Graphs ---------- */
+function line(title, xTitle, labels, sets){
+  const W=520,H=320,L=56,R=14,T=36,B=48;
+  const max=Math.max(...sets.flatMap(s=>s.data))*1.08||1;
+  const X=i=>L+i*(W-L-R)/(labels.length-1), Y=v=>T+(1-v/max)*(H-T-B);
+  let o=`<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${title}">
+   <text x="${W/2}" y="20" text-anchor="middle" font-size="14" font-weight="600" fill="${css("var(--text)")}">${title}</text>`;
+  for(let k=0;k<=4;k++){const v=max*k/4,y=Y(v);
+    o+=`<line x1="${L}" x2="${W-R}" y1="${y}" y2="${y}" stroke="${css("var(--line)")}"/><text x="${L-6}" y="${y+4}" text-anchor="end" font-size="11" fill="${css("var(--muted)")}">${v.toFixed(2)}</text>`;}
+  labels.forEach((l,i)=>o+=`<text x="${X(i)}" y="${H-B+16}" text-anchor="middle" font-size="11" fill="${css("var(--muted)")}">${l}</text>`);
+  o+=`<text x="${(L+W-R)/2}" y="${H-B+34}" text-anchor="middle" font-size="12" fill="${css("var(--muted)")}">${xTitle}</text>
+   <text transform="translate(14 ${(T+H-B)/2}) rotate(-90)" text-anchor="middle" font-size="12" fill="${css("var(--muted)")}">Throughput (packets per tick)</text>`;
+  sets.forEach(s=>{const c=css(s.color);
+    o+=`<polyline fill="none" stroke="${c}" stroke-width="2.5" ${s.dash?'stroke-dasharray="6 4"':''} points="${s.data.map((v,i)=>X(i)+","+Y(v)).join(" ")}"/>`;
+    if(!s.dash) s.data.forEach((v,i)=>o+=`<circle cx="${X(i)}" cy="${Y(v)}" r="4" fill="${c}"><title>${s.label}: ${v.toFixed(3)}</title></circle>`);});
+  o+=`</svg><div class="legend">`+sets.map(s=>`<span><i style="background:${css(s.color)};${s.dash?"opacity:.55":""}"></i>${s.label}</span>`).join("")+`</div>`;
+  return o;
+}
+$("rungraphs").onclick = async () => {
+  const btn = $("rungraphs"); btn.disabled = true; btn.textContent = "Running...";
+  const g = await (await fetch("/api/graphs")).json();
+  btn.disabled = false; btn.textContent = "Draw graphs again";
+  $("graphOut").className = "";
+  $("graphOut").innerHTML = `<div class="charts">
+    <div class="card" id="c1"></div><div class="card" id="c2"></div><div class="card wide" id="c3"></div></div>
+    <div class="card"><h2>What the graphs say</h2><p class="note">Selective Repeat is always best, and Go-Back-N falls faster as loss grows.
+    A bigger window helps up to a point. The simulation matches the theory lines.</p></div>`;
+  $("c1").innerHTML = (line( "Throughput vs loss rate (window = 8)", "Packet loss rate (%)", g.losses,
+    [{label:"Go-Back-N", data:g.loss_gbn, color:"var(--gbn)"}, {label:"Selective Repeat", data:g.loss_sr, color:"var(--sr)"}]));
+  $("c2").innerHTML = (line( "Throughput vs window size (10% loss)", "Window size", g.windows,
+    [{label:"Go-Back-N", data:g.win_gbn, color:"var(--gbn)"}, {label:"Selective Repeat", data:g.win_sr, color:"var(--sr)"}]));
+  $("c3").innerHTML = (line( "Simulation vs theory", "Packet loss rate (%)", g.theory_losses,
+    [{label:"Stop-and-Wait (simulation)", data:g.sim_sw, color:"var(--sw)"},
+     {label:"Stop-and-Wait (theory)", data:g.th_sw, color:"var(--sw)", dash:[6,4]},
+     {label:"Selective Repeat (simulation)", data:g.sim_sr, color:"var(--sr)"},
+     {label:"Selective Repeat (theory)", data:g.th_sr, color:"var(--sr)", dash:[6,4]}]));
+};
+</script>
+</body>
+</html>
