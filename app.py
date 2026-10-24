@@ -70,10 +70,12 @@ def api_demo():
         r = run_protocol(name, message, window, modulo, delay=delay, timeout=timeout,
                          every_kth=every_kth, ack_every_kth=ack_kth,
                          max_ticks=300 + 30 * len(message))
+        if isinstance(r["delivered"], str) and len(r["delivered"]) > 40:
+            r["delivered"] = r["delivered"][:40] + "..."
         r["protocol"] = name
         r["modulo"] = modulo
         results.append(r)
-    return jsonify({"message": message, "window": window, "results": results})
+    return jsonify({"message": message, "window": window, "delay": delay, "timeout": timeout, "results": results})
 
 
 @app.route("/api/numbering", methods=["POST"])

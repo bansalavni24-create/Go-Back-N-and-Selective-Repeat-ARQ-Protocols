@@ -25,7 +25,7 @@
   input[type=number]{width:80px} #msg{width:220px}
   .go{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:9px 20px;font:inherit;font-weight:600;cursor:pointer}
   .go:disabled{opacity:.5}
-  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
   @media(max-width:800px){.grid3{grid-template-columns:1fr}}
   .stat{border-top:4px solid var(--c);}
   .stat h3{margin:0;font-size:15px;color:var(--c)}
@@ -48,13 +48,17 @@
   th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left}
   th{color:var(--muted);font-weight:600;font-size:12px}
   td.c{text-align:center}
-  .note{color:var(--muted);font-size:13px;margin:8px 0 0}
+  .note{color:var(--muted);font-size:13px;margin:8px 0 0;overflow-wrap:anywhere}
   .charts{display:grid;grid-template-columns:1fr 1fr;gap:14px}
   @media(max-width:800px){.charts{grid-template-columns:1fr}}
   .wide{grid-column:1/-1} .wide svg{max-width:640px;display:block;margin:0 auto}
   .legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12.5px;color:var(--muted);justify-content:center}
   .legend i{display:inline-block;width:14px;height:4px;border-radius:2px;margin-right:6px;vertical-align:middle}
   .hidden{display:none}
+  .animlog{font:12.5px/1.55 ui-monospace,Consolas,monospace;background:var(--bg);border-radius:8px;padding:10px;min-height:150px}
+  .animlog div{white-space:pre-wrap}
+  .animlog .lost{color:var(--bad);font-weight:600} .animlog .to{color:var(--warn);font-weight:600} .animlog .rcv{color:var(--muted)}
+  #aslide{width:100%;margin-top:8px}
   .msg{padding:30px;text-align:center;color:var(--muted)}
 </style>
 </head>
@@ -65,6 +69,7 @@
 </header>
 <nav>
   <button class="on" data-tab="demo">Live Demo</button>
+  <button data-tab="anim">Animation</button>
   <button data-tab="num">Sequence Numbering</button>
   <button data-tab="graphs">Graphs</button>
 </nav>
@@ -90,6 +95,23 @@
     </div>
   </div>
   <div id="demoOut" class="msg">Press "Send message" to start.</div>
+</section>
+
+<section id="anim" class="hidden">
+  <div class="card">
+    <div class="row">
+      <label>Protocol
+        <select id="aproto"><option value="0">Stop-and-Wait</option><option value="1" selected>Go-Back-N</option><option value="2">Selective Repeat</option></select></label>
+      <label>Speed
+        <select id="aspeed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select></label>
+      <button class="go" id="aplay">Play</button>
+      <button class="go" id="astep">Step +1 tick</button>
+      <button class="go" id="areset">Reset</button>
+      <button class="go" id="arerun">Run with Live Demo settings</button>
+    </div>
+    <p class="note">Time-space diagram built from the trace of the chosen protocol, for the message and settings on the Live Demo tab. Frames go right (black), ACKs come back (green dashed), lost ones stop with a red cross.</p>
+  </div>
+  <div class="card" id="animStage"><div class="msg">Loading...</div></div>
 </section>
 
 <section id="num" class="hidden">
@@ -119,7 +141,8 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v.s
 
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
-  ["demo","num","graphs"].forEach(t => $(t).classList.toggle("hidden", t !== b.dataset.tab));
+  ["demo","anim","num","graphs"].forEach(t => $(t).classList.toggle("hidden", t !== b.dataset.tab));
+  if (b.dataset.tab === "anim") initAnim();
 });
 
 async function post(url, body){
@@ -133,6 +156,7 @@ $("rundemo").onclick = async () => {
   const data = await post("/api/demo", {message:$("msg").value, window:$("window").value, every_kth:$("kth").value,
     ack_every_kth:$("ackkth").value, delay:$("delay").value, timeout:$("timeout").value, scheme:$("scheme").value});
   btn.disabled = false;
+  lastDemo = data; anim.ev = null;
   const maxTime = Math.max(...data.results.map(r => r.time));
   let html = `<div class="grid3">`;
   for (const r of data.results){
@@ -160,6 +184,150 @@ $("rundemo").onclick = async () => {
   document.querySelectorAll("#logTabs button").forEach(b => b.onclick = () => show(+b.dataset.i));
   show(1);
 };
+
+/* ---------- Animation: time-space (ladder) diagram ---------- */
+let lastDemo = null;
+const anim = {T:0, playing:false, speed:1, proto:1, ev:null, raf:0, last:0};
+
+async function getDemo(){
+  const data = await post("/api/demo", {message:$("msg").value, window:$("window").value, every_kth:$("kth").value,
+    ack_every_kth:$("ackkth").value, delay:$("delay").value, timeout:$("timeout").value, scheme:$("scheme").value});
+  lastDemo = data; anim.ev = null; return data;
+}
+function parseLog(r, proto, window){
+  const ev = {frames:[], acks:[], wins:[{t:0, a:0, b: proto === 0 ? 0 : window - 1}], tos:[], msgs:[], end:r.time, sTicks:new Set(), rTicks:new Set()};
+  const all = new Set(), seen = {};
+  for (const l of r.log){
+    const m = l.match(/^t=\s*(\d+)\s+(Sender|Receiver)\s*:\s*(.*)$/); if (!m) continue;
+    const t = +m[1], s = m[3]; all.add(t);
+    if (m[2] === "Sender"){
+      ev.sTicks.add(t);
+      let a = s.match(/sends frame (\d+) '(.*?)' \(seq (\d+)\)/);
+      if (a){ ev.frames.push({id:+a[1], ch:a[2], seq:+a[3], t0:t, lost:s.includes("LOST"), retx:!!seen[a[1]]}); seen[a[1]] = true; }
+      let w = s.match(/window(?: slides to)? \[(\d+)\.\.(\d+)\]/);
+      if (w) ev.wins.push({t, a:+w[1], b:+w[2]});
+      let d = s.match(/frame (\d+) is done/);
+      if (d) ev.wins.push({t, a:+d[1] + 1, b:+d[1] + 1});
+      if (s.includes("TIMEOUT")) ev.tos.push(t);
+    } else {
+      ev.rTicks.add(t);
+      let a = s.match(/sends ACK (\d+)/);
+      if (a) ev.acks.push({n:+a[1], t0:t, lost:s.includes("LOST")});
+      let g = s.match(/Message so far: (.*)$/);
+      if (g) ev.msgs.push({t, msg:g[1]});
+    }
+  }
+  ev.ticks = [...all].sort((x, y) => x - y);
+  return ev;
+}
+function drawAnim(){
+  const R = lastDemo.results[anim.proto], ev = anim.ev, T = anim.T, D = lastDemo.delay, n = lastDemo.message.length;
+  const mod = R.modulo, lab = i => mod === null ? i : i % mod, Wr = anim.proto === 2 ? lastDemo.window : 1;
+  const ink = css("var(--text)"), quiet = css("var(--muted)"), line = css("var(--line)"), card = css("var(--card)");
+  const acc = css("var(--accent)"), ok = css("var(--ok)"), bad = css("var(--bad)"), warn = css("var(--warn)");
+  const SX = 232, RX = 528, y0 = 112, rowH = 42, ticks = ev.ticks;
+  const idx = new Map(ticks.map((t, i) => [t, i]));
+  const Y = t => {
+    if (idx.has(t)) return y0 + idx.get(t) * rowH;
+    let lo = -1; for (let i = 0; i < ticks.length; i++) if (ticks[i] < t) lo = i;
+    if (lo < 0) return y0 - (ticks[0] - t) * rowH * 0.5;
+    if (lo >= ticks.length - 1) return y0 + lo * rowH + (t - ticks[lo]) * rowH * 0.5;
+    return y0 + (lo + (t - ticks[lo]) / (ticks[lo + 1] - ticks[lo])) * rowH;
+  };
+  const H = y0 + (ticks.length + 1) * rowH + 40, halo = `paint-order="stroke" stroke="${card}" stroke-width="4" stroke-linejoin="round"`;
+  let o = `<svg viewBox="0 0 760 ${H}" width="100%" role="img" aria-label="Time-space diagram of frames and ACKs between sender and receiver" font-size="12">`;
+  o += `<rect x="${SX - 50}" y="14" width="100" height="34" rx="8" fill="${card}" stroke="${ink}"/><text x="${SX}" y="36" text-anchor="middle" font-weight="700" fill="${ink}">Sender</text>`;
+  o += `<rect x="${RX - 50}" y="14" width="100" height="34" rx="8" fill="${card}" stroke="${ink}"/><text x="${RX}" y="36" text-anchor="middle" font-weight="700" fill="${ink}">Receiver</text>`;
+  o += `<line x1="${SX}" x2="${SX}" y1="48" y2="${H - 44}" stroke="${ink}" stroke-width="1.5"/><line x1="${RX}" x2="${RX}" y1="48" y2="${H - 44}" stroke="${ink}" stroke-width="1.5"/>`;
+  o += `<polygon points="${SX - 5},${H - 50} ${SX + 5},${H - 50} ${SX},${H - 40}" fill="${ink}"/><polygon points="${RX - 5},${H - 50} ${RX + 5},${H - 50} ${RX},${H - 40}" fill="${ink}"/>`;
+  o += `<text x="380" y="${H - 22}" text-anchor="middle" font-size="11" fill="${quiet}">Time flows downwards; the left column is the tick number.</text>`;
+  o += `<text x="380" y="${H - 8}" text-anchor="middle" font-size="11" fill="${quiet}">Strips: sequence numbers (${mod === null ? "not told, counting 0,1,2..." : "modulo " + mod}); shaded cells = window; S = next frame to send.</text>`;
+  o += `<text x="4" y="${y0 - 18}" font-size="10" fill="${quiet}">tick</text>`;
+  const head = (x1, y1, x2, y2, c) => { const an = Math.atan2(y2 - y1, x2 - x1), L = 9, w = 4.5; const bx = x2 - L * Math.cos(an), by = y2 - L * Math.sin(an);
+    return `<polygon points="${x2},${y2} ${bx - w * Math.sin(an)},${by + w * Math.cos(an)} ${bx + w * Math.sin(an)},${by - w * Math.cos(an)}" fill="${c}"/>`; };
+  const strip = (cx, y, from, count, a, b, nextI, edge) => {
+    const cw = 16; let x0 = edge === "right" ? cx - count * cw : cx; let g = "";
+    for (let k = 0; k < count; k++){ const i = from + k, inw = i >= a && i <= b;
+      g += `<rect x="${x0 + k * cw}" y="${y - 9}" width="${cw}" height="18" fill="${inw ? acc : card}" fill-opacity="${inw ? 0.28 : 1}" stroke="${ink}" stroke-width="0.8"/>`;
+      g += `<text x="${x0 + k * cw + cw / 2}" y="${y + 4}" text-anchor="middle" font-size="10.5" fill="${ink}">${lab(i)}</text>`;
+      if (nextI === i) g += `<line x1="${x0 + k * cw + cw / 2}" x2="${x0 + k * cw + cw / 2}" y1="${y + 9}" y2="${y + 14}" stroke="${ok}"/><text x="${x0 + k * cw + cw / 2}" y="${y + 24}" text-anchor="middle" font-size="10" font-weight="700" fill="${ok}">S</text>`; }
+    return g;
+  };
+  const cells = Math.min(11, n);
+  for (const t of ticks){
+    if (t > T) break; const y = Y(t);
+    o += `<text x="4" y="${y + 4}" font-size="10" fill="${quiet}">${t}</text>`;
+    if (ev.sTicks.has(t)){
+      const w = ev.wins.filter(x => x.t <= t).at(-1), sentNow = ev.frames.filter(f => f.t0 <= t).at(-1), nxt = sentNow ? sentNow.id + 1 : 0;
+      const from = Math.max(0, Math.min(w.a, n - cells));
+      o += strip(SX - 14, y, from, cells, w.a, w.b, nxt, "right");
+    }
+    if (ev.rTicks.has(t)){
+      const d = (ev.msgs.filter(x => x.t <= t).at(-1) || {msg:""}).msg.length;
+      const from = Math.max(0, Math.min(d, n - cells));
+      o += strip(RX + 14, y, from, cells, d, d + Wr - 1, -1, "left");
+    }
+  }
+  for (const t of ev.tos) if (t <= T){ const y = Y(t);
+    o += `<circle cx="${SX}" cy="${y}" r="4.5" fill="${warn}"/><text x="${SX + 9}" y="${y - 9}" ${halo} font-size="11" font-weight="700" fill="${warn}">TIMEOUT</text>`; }
+  for (const f of ev.frames){
+    if (T < f.t0) continue; const fr = Math.min(1, (T - f.t0) / D), endF = f.lost ? 0.55 : 1;
+    const x1 = SX, y1 = Y(f.t0), x2 = RX, y2 = Y(f.t0 + D), cur = fr * endF;
+    const cx = x1 + (x2 - x1) * cur, cy = y1 + (y2 - y1) * cur, col = f.retx ? warn : ink;
+    o += `<line x1="${x1}" y1="${y1}" x2="${cx}" y2="${cy}" stroke="${col}" stroke-width="1.6"/>`;
+    if (fr >= 1 && !f.lost) o += head(x1, y1, x2, y2, col);
+    if (fr >= 1 && f.lost) o += `<text x="${cx}" y="${cy + 6}" text-anchor="middle" font-size="18" font-weight="700" fill="${bad}">&#10007;</text><text x="${cx + 16}" y="${cy + 20}" ${halo} font-size="11" font-weight="700" fill="${bad}">Lost</text>`;
+    if (fr > 0.35){ const mx = x1 + (x2 - x1) * endF * 0.5, my = y1 + (y2 - y1) * endF * 0.5;
+      o += `<text x="${mx}" y="${my - 7}" ${halo} text-anchor="middle" font-size="11.5" font-weight="${f.retx ? 700 : 400}" fill="${f.retx ? warn : ink}">Frame ${f.id} '${esc(f.ch)}' (seq ${f.seq})${f.retx ? " resent" : ""}</text>`; }
+  }
+  for (const a of ev.acks){
+    if (T < a.t0) continue; const fr = Math.min(1, (T - a.t0) / D), endF = a.lost ? 0.55 : 1;
+    const x1 = RX, y1 = Y(a.t0), x2 = SX, y2 = Y(a.t0 + D), cur = fr * endF;
+    const cx = x1 + (x2 - x1) * cur, cy = y1 + (y2 - y1) * cur;
+    o += `<line x1="${x1}" y1="${y1}" x2="${cx}" y2="${cy}" stroke="${ok}" stroke-width="1.5" stroke-dasharray="6 4"/>`;
+    if (fr >= 1 && !a.lost) o += head(x1, y1, x2, y2, ok);
+    if (fr >= 1 && a.lost) o += `<text x="${cx}" y="${cy + 6}" text-anchor="middle" font-size="18" font-weight="700" fill="${bad}">&#10007;</text><text x="${cx - 16}" y="${cy + 20}" ${halo} text-anchor="end" font-size="11" font-weight="700" fill="${bad}">ACK lost</text>`;
+    if (fr > 0.35){ const mx = x1 + (x2 - x1) * endF * 0.5, my = y1 + (y2 - y1) * endF * 0.5;
+      o += `<text x="${mx}" y="${my + 15}" ${halo} text-anchor="middle" font-size="11.5" fill="${ok}">ACK ${a.n}</text>`; }
+  }
+  o += `</svg>`;
+  const t0 = Math.floor(T);
+  const lines = R.log.filter(l => { const m = l.match(/^t=\s*(\d+)/); return m && +m[1] <= t0; }).slice(-6);
+  const lg = lines.map(l => { const c = l.includes("LOST") ? "lost" : l.includes("TIMEOUT") ? "to" : l.includes("Receiver") ? "rcv" : ""; return `<div class="${c}">${esc(l)}</div>`; }).join("");
+  const keep = $("animScroll") ? $("animScroll").scrollTop : 0;
+  $("animStage").innerHTML = `<div class="row" style="justify-content:space-between;margin-bottom:6px"><b>${esc(R.protocol)}</b><span class="note" style="margin:0">t = ${t0} / ${ev.end} &middot; ${R.sent} frames sent &middot; receiver got: <b>${esc(R.delivered || "")}</b></span></div>
+    <div id="animScroll" style="max-height:620px;overflow:auto;border:1px solid var(--line);border-radius:8px">${o}</div>
+    <input id="aslide" type="range" min="0" max="${ev.end * 10}" value="${Math.round(T * 10)}"><div class="animlog">${lg}</div>`;
+  const sc = $("animScroll"); sc.scrollTop = anim.playing ? Math.max(0, (Y(T) - 260) * sc.clientWidth / 760) : keep;
+  $("aslide").oninput = e => { anim.T = +e.target.value / 10; anim.playing = false; $("aplay").textContent = "Play"; drawAnim(); };
+}
+function animLoop(ts){
+  if (!anim.playing) return;
+  anim.T = Math.min(anim.ev.end, anim.T + (ts - anim.last) / 1000 * anim.speed * 2); anim.last = ts;
+  drawAnim();
+  if (anim.T >= anim.ev.end){ anim.playing = false; $("aplay").textContent = "Replay"; return; }
+  anim.raf = requestAnimationFrame(animLoop);
+}
+function setProto(){
+  anim.proto = +$("aproto").value;
+  anim.ev = parseLog(lastDemo.results[anim.proto], anim.proto, lastDemo.window); anim.T = 0; anim.playing = false; $("aplay").textContent = "Play";
+  drawAnim();
+}
+async function initAnim(){
+  if (!lastDemo) await getDemo();
+  if (!anim.ev) setProto();
+}
+$("aproto").onchange = () => { if (lastDemo) setProto(); };
+$("aspeed").onchange = e => { anim.speed = +e.target.value; };
+$("aplay").onclick = () => {
+  if (!anim.ev) return;
+  if (anim.playing){ anim.playing = false; $("aplay").textContent = "Play"; return; }
+  if (anim.T >= anim.ev.end) anim.T = 0;
+  anim.playing = true; $("aplay").textContent = "Pause"; anim.last = performance.now(); anim.raf = requestAnimationFrame(animLoop);
+};
+$("astep").onclick = () => { if (!anim.ev) return; anim.playing = false; $("aplay").textContent = "Play"; anim.T = Math.min(anim.ev.end, Math.floor(anim.T) + 1); drawAnim(); };
+$("areset").onclick = () => { if (!anim.ev) return; anim.playing = false; $("aplay").textContent = "Play"; anim.T = 0; drawAnim(); };
+$("arerun").onclick = async () => { anim.playing = false; await getDemo(); setProto(); };
 
 /* ---------- Numbering ---------- */
 const tag = s => { const k = s === "never finishes" ? "never" : s; return `<span class="tag t-${k}">${s}</span>`; };
@@ -221,7 +389,7 @@ $("rungraphs").onclick = async () => {
   const btn = $("rungraphs"); btn.disabled = true; btn.textContent = "Running...";
   const g = await (await fetch("/api/graphs")).json();
   btn.disabled = false; btn.textContent = "Draw graphs again";
-  $("graphOut").className = "";
+    $("graphOut").className = "";
   $("graphOut").innerHTML = `<div class="charts">
     <div class="card" id="c1"></div><div class="card" id="c2"></div><div class="card wide" id="c3"></div></div>
     <div class="card"><h2>What the graphs say</h2><p class="note">Selective Repeat is always best, and Go-Back-N falls faster as loss grows.
