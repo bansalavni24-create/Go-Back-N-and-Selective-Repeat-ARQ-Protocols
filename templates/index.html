@@ -82,6 +82,7 @@
       <label>Window size<input id="window" type="number" value="3" min="1" max="8"></label>
       <label>Every k-th frame lost (0 = none)<input id="kth" type="number" value="4" min="0" max="20"></label>
       <label>Every k-th ACK lost (0 = none)<input id="ackkth" type="number" value="0" min="0" max="20"></label>
+      <label>Random loss % (replaces the k-th rules)<input id="rloss" type="number" value="0" min="0" max="60"></label>
       <label>Delay (ticks)<input id="delay" type="number" value="2" min="1" max="10"></label>
       <label>Timeout (ticks)<input id="timeout" type="number" value="6" min="2" max="40"></label>
       <label>Sequence numbers
@@ -126,8 +127,19 @@
 </section>
 
 <section id="graphs" class="hidden">
-  <div class="card"><button class="go" id="rungraphs">Draw graphs</button>
-    <span class="note">Takes a few seconds: it runs hundreds of simulations.</span></div>
+  <div class="card">
+    <div class="row">
+      <label>Window size<input id="gwin" type="number" value="8" min="1" max="64"></label>
+      <label>Delay (ticks)<input id="gdelay" type="number" value="5" min="1" max="20"></label>
+      <label>Timeout (ticks)<input id="gtimeout" type="number" value="12" min="2" max="60"></label>
+      <label>Packets sent<input id="gpackets" type="number" value="100" min="20" max="500"></label>
+      <label>Runs per point<input id="gruns" type="number" value="20" min="5" max="100"></label>
+      <label>Loss for window graph (%)<input id="gwloss" type="number" value="10" min="0" max="50"></label>
+      <button class="go" id="gcopy" style="background:var(--muted)">Copy from Live Demo</button>
+      <button class="go" id="rungraphs">Draw graphs</button>
+    </div>
+    <p class="note">Graphs use random loss (0% to 30%, frames and ACKs) averaged over many runs. Window, delay and timeout can be copied from the Live Demo form. Takes a few seconds.</p>
+  </div>
   <div id="graphOut" class="msg">Press "Draw graphs" to start.</div>
 </section>
 
@@ -143,6 +155,7 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
   ["demo","anim","num","graphs"].forEach(t => $(t).classList.toggle("hidden", t !== b.dataset.tab));
   if (b.dataset.tab === "anim") initAnim();
+  if (b.dataset.tab === "graphs" && !window.gTouched){ copyDemo(); }
 });
 
 async function post(url, body){
@@ -154,7 +167,7 @@ async function post(url, body){
 $("rundemo").onclick = async () => {
   const btn = $("rundemo"); btn.disabled = true;
   const data = await post("/api/demo", {message:$("msg").value, window:$("window").value, every_kth:$("kth").value,
-    ack_every_kth:$("ackkth").value, delay:$("delay").value, timeout:$("timeout").value, scheme:$("scheme").value});
+    ack_every_kth:$("ackkth").value, random_loss:$("rloss").value, delay:$("delay").value, timeout:$("timeout").value, scheme:$("scheme").value});
   btn.disabled = false;
   lastDemo = data; anim.ev = null;
   const maxTime = Math.max(...data.results.map(r => r.time));
@@ -191,7 +204,7 @@ const anim = {T:0, playing:false, speed:1, proto:1, ev:null, raf:0, last:0};
 
 async function getDemo(){
   const data = await post("/api/demo", {message:$("msg").value, window:$("window").value, every_kth:$("kth").value,
-    ack_every_kth:$("ackkth").value, delay:$("delay").value, timeout:$("timeout").value, scheme:$("scheme").value});
+    ack_every_kth:$("ackkth").value, random_loss:$("rloss").value, delay:$("delay").value, timeout:$("timeout").value, scheme:$("scheme").value});
   lastDemo = data; anim.ev = null; return data;
 }
 function parseLog(r, proto, window){
@@ -368,41 +381,52 @@ $("runnum").onclick = async () => {
 };
 
 /* ---------- Graphs ---------- */
-function line(title, xTitle, labels, sets){
+function line(title, xTitle, labels, sets, opts = {}){
   const W=520,H=320,L=56,R=14,T=36,B=48;
   const max=Math.max(...sets.flatMap(s=>s.data))*1.08||1;
-  const X=i=>L+i*(W-L-R)/(labels.length-1), Y=v=>T+(1-v/max)*(H-T-B);
+  const xp = opts.xpos || labels.map((_, i) => i), xa = Math.min(...xp), xb = Math.max(...xp); const X=i=>L+(xp[i]-xa)/(xb-xa)*(W-L-R), Y=v=>T+(1-v/max)*(H-T-B);
   let o=`<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${title}">
    <text x="${W/2}" y="20" text-anchor="middle" font-size="14" font-weight="600" fill="${css("var(--text)")}">${title}</text>`;
   for(let k=0;k<=4;k++){const v=max*k/4,y=Y(v);
     o+=`<line x1="${L}" x2="${W-R}" y1="${y}" y2="${y}" stroke="${css("var(--line)")}"/><text x="${L-6}" y="${y+4}" text-anchor="end" font-size="11" fill="${css("var(--muted)")}">${v.toFixed(2)}</text>`;}
   labels.forEach((l,i)=>o+=`<text x="${X(i)}" y="${H-B+16}" text-anchor="middle" font-size="11" fill="${css("var(--muted)")}">${l}</text>`);
   o+=`<text x="${(L+W-R)/2}" y="${H-B+34}" text-anchor="middle" font-size="12" fill="${css("var(--muted)")}">${xTitle}</text>
-   <text transform="translate(14 ${(T+H-B)/2}) rotate(-90)" text-anchor="middle" font-size="12" fill="${css("var(--muted)")}">Throughput (packets per tick)</text>`;
+   <text transform="translate(14 ${(T+H-B)/2}) rotate(-90)" text-anchor="middle" font-size="12" fill="${css("var(--muted)")}">${opts.ytitle || "Throughput (packets per tick)"}</text>`;
+  if (opts.vline){ const vx = L + (opts.vline.x - xa) / (xb - xa) * (W - L - R); o += `<line x1="${vx}" x2="${vx}" y1="${T}" y2="${H-B}" stroke="${css("var(--muted)")}" stroke-dasharray="4 4"/><text x="${vx + 4}" y="${T + 12}" font-size="10.5" fill="${css("var(--muted)")}">${opts.vline.label}</text>`; }
   sets.forEach(s=>{const c=css(s.color);
     o+=`<polyline fill="none" stroke="${c}" stroke-width="2.5" ${s.dash?'stroke-dasharray="6 4"':''} points="${s.data.map((v,i)=>X(i)+","+Y(v)).join(" ")}"/>`;
     if(!s.dash) s.data.forEach((v,i)=>o+=`<circle cx="${X(i)}" cy="${Y(v)}" r="4" fill="${c}"><title>${s.label}: ${v.toFixed(3)}</title></circle>`);});
   o+=`</svg><div class="legend">`+sets.map(s=>`<span><i style="background:${css(s.color)};${s.dash?"opacity:.55":""}"></i>${s.label}</span>`).join("")+`</div>`;
   return o;
 }
+const copyDemo = () => { $("gwin").value = $("window").value; $("gdelay").value = $("delay").value; $("gtimeout").value = $("timeout").value;
+  const rl = +$("rloss").value, k = +$("kth").value; $("gwloss").value = rl > 0 ? rl : (k > 0 ? Math.round(100 / k) : 10); };
+$("gcopy").onclick = () => { window.gTouched = false; copyDemo(); };
+["gwin","gdelay","gtimeout","gpackets","gruns","gwloss"].forEach(id => $(id).oninput = () => { window.gTouched = true; });
 $("rungraphs").onclick = async () => {
   const btn = $("rungraphs"); btn.disabled = true; btn.textContent = "Running...";
-  const g = await (await fetch("/api/graphs")).json();
+  const g = await post("/api/graphs", {window:$("gwin").value, delay:$("gdelay").value, timeout:$("gtimeout").value,
+    packets:$("gpackets").value, runs:$("gruns").value, window_loss:$("gwloss").value});
   btn.disabled = false; btn.textContent = "Draw graphs again";
-    $("graphOut").className = "";
-  $("graphOut").innerHTML = `<div class="charts">
-    <div class="card" id="c1"></div><div class="card" id="c2"></div><div class="card wide" id="c3"></div></div>
-    <div class="card"><h2>What the graphs say</h2><p class="note">Selective Repeat is always best, and Go-Back-N falls faster as loss grows.
-    A bigger window helps up to a point. The simulation matches the theory lines.</p></div>`;
-  $("c1").innerHTML = (line( "Throughput vs loss rate (window = 8)", "Packet loss rate (%)", g.losses,
-    [{label:"Go-Back-N", data:g.loss_gbn, color:"var(--gbn)"}, {label:"Selective Repeat", data:g.loss_sr, color:"var(--sr)"}]));
-  $("c2").innerHTML = (line( "Throughput vs window size (10% loss)", "Window size", g.windows,
-    [{label:"Go-Back-N", data:g.win_gbn, color:"var(--gbn)"}, {label:"Selective Repeat", data:g.win_sr, color:"var(--sr)"}]));
-  $("c3").innerHTML = (line( "Simulation vs theory", "Packet loss rate (%)", g.theory_losses,
-    [{label:"Stop-and-Wait (simulation)", data:g.sim_sw, color:"var(--sw)"},
+  const p = g.params;
+  $("graphOut").className = "";
+  $("graphOut").innerHTML = (g.warning ? `<div class="card"><b style="color:var(--warn)">Note:</b> ${g.warning}</div>` : "") + `<div class="charts">
+    <div class="card" id="c1"></div><div class="card" id="c2"></div><div class="card" id="c3"></div><div class="card" id="c4"></div></div>
+    <div class="card"><h2>What the graphs say</h2><p class="note">Settings used: window ${p.window}, delay ${p.delay}, timeout ${p.timeout}, ${p.packets} packets, ${p.runs} runs per point.
+    With a small window Go-Back-N and Selective Repeat are close; with a bigger window Selective Repeat pulls ahead and Go-Back-N flattens. Stop-and-Wait is the slowest. On the window graph, left of the dashed line the window is too small to keep the channel busy even with no loss; beyond it, Selective Repeat still gains because a lost frame no longer blocks the others, while Go-Back-N flattens. Go-Back-N also sends far more frames per delivered packet, which is the price of its simplicity. Change a setting and draw again to see how each protocol reacts.</p></div>`;
+  $("c1").innerHTML = line(`Throughput vs loss rate (window = ${p.window})`, "Packet loss rate (%)", g.losses.map(x => x + "%"),
+    [{label:"Stop-and-Wait", data:g.loss_sw, color:"var(--sw)"}, {label:"Go-Back-N", data:g.loss_gbn, color:"var(--gbn)"}, {label:"Selective Repeat", data:g.loss_sr, color:"var(--sr)"}]);
+  $("c2").innerHTML = line(`Throughput vs window size (${p.window_loss}% loss)`, "Window size (log scale)", g.windows,
+    [{label:"Go-Back-N", data:g.win_gbn, color:"var(--gbn)"}, {label:"Selective Repeat", data:g.win_sr, color:"var(--sr)"}],
+    {xpos:g.windows.map(w => Math.log2(w)), vline:{x:Math.log2(p.bdp), label:`pipe full: 2 x delay + 1 = ${p.bdp}`}});
+  $("c3").innerHTML = line(`Frames sent per packet delivered (window ${p.window})`, "Packet loss rate (%)", g.losses.map(x => x + "%"),
+    [{label:"Stop-and-Wait", data:g.over_sw, color:"var(--sw)"}, {label:"Go-Back-N", data:g.over_gbn, color:"var(--gbn)"}, {label:"Selective Repeat", data:g.over_sr, color:"var(--sr)"},
+     {label:"Theory 1/(1-p)^2", data:g.over_th, color:"var(--muted)", dash:[6,4]}], {ytitle:"Frames sent per packet"});
+  $("c4").innerHTML = line("Simulation vs theory (throughput)", "Packet loss rate (%)", g.losses.map(x => x + "%"),
+    [{label:"Stop-and-Wait (simulation)", data:g.loss_sw, color:"var(--sw)"},
      {label:"Stop-and-Wait (theory)", data:g.th_sw, color:"var(--sw)", dash:[6,4]},
-     {label:"Selective Repeat (simulation)", data:g.sim_sr, color:"var(--sr)"},
-     {label:"Selective Repeat (theory)", data:g.th_sr, color:"var(--sr)", dash:[6,4]}]));
+     {label:`Selective Repeat window ${p.window} (simulation)`, data:g.loss_sr, color:"var(--sr)"},
+     {label:"Selective Repeat (ideal theory)", data:g.th_sr, color:"var(--sr)", dash:[6,4]}]);
 };
 </script>
 </body>

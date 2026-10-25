@@ -1,19 +1,31 @@
-# Secrets (most important)
-.env
-.env.*
-!.env.example
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
 
-# OS / editor junk
-.DS_Store
-Thumbs.db
+# Virtual environments
+venv/
+.venv/
+env/
+
+# VS Code and other editors
 .vscode/
 .idea/
 
-# Logs
+# Windows and macOS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Flask
+instance/
 *.log
 
-venv/
-.venv/
-__pycache__/
-*.pyc
-db.sqlite3
+# Graph images made by compare.py, window_test.py and theory.py
+# (remove these three lines if you want to keep them in the repo)
+throughput_vs_loss.png
+throughput_vs_window.png
+simulation_vs_theory.png
+
+# Environment files and secrets
+.env

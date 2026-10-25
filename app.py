@@ -64,18 +64,20 @@ def api_demo():
     delay = to_int(data.get("delay"), 2, 1, 10)
     timeout = to_int(data.get("timeout"), 6, 2, 40)
     scheme = data.get("scheme", "safe")
+    random_loss = to_int(data.get("random_loss"), 0, 0, 60) / 100
     results = []
     for name in PROTOCOLS:
         modulo = pick_modulo(name, scheme, window)
         r = run_protocol(name, message, window, modulo, delay=delay, timeout=timeout,
-                         every_kth=every_kth, ack_every_kth=ack_kth,
-                         max_ticks=300 + 30 * len(message))
+                         every_kth=0 if random_loss > 0 else every_kth,
+                         ack_every_kth=0 if random_loss > 0 else ack_kth,
+                         loss_prob=random_loss, max_ticks=300 + 30 * len(message))
         if isinstance(r["delivered"], str) and len(r["delivered"]) > 40:
             r["delivered"] = r["delivered"][:40] + "..."
         r["protocol"] = name
         r["modulo"] = modulo
         results.append(r)
-    return jsonify({"message": message, "window": window, "delay": delay, "timeout": timeout, "results": results})
+    return jsonify({"message": message, "window": window, "delay": delay, "timeout": timeout, "random_loss": int(round(random_loss * 100)), "every_kth": every_kth, "results": results})
 
 
 @app.route("/api/numbering", methods=["POST"])
@@ -128,36 +130,48 @@ def api_numbering():
     return jsonify(out)
 
 
-@app.route("/api/graphs")
+@app.route("/api/graphs", methods=["GET", "POST"])
 def api_graphs():
-    runs = 20
+    data = request.get_json(silent=True) or {}
+    window = to_int(data.get("window"), 8, 1, 64)
+    delay = to_int(data.get("delay"), 5, 1, 20)
+    timeout = to_int(data.get("timeout"), 12, 2, 60)
+    packets = to_int(data.get("packets"), 100, 20, 500)
+    runs = to_int(data.get("runs"), 20, 5, 100)
+    window_loss = to_int(data.get("window_loss"), 10, 0, 50) / 100
 
-    def avg(protocol, total, window, loss):
-        vals = []
+    def avg(protocol, w, loss):
+        """Average throughput and average frames sent per packet over many runs."""
+        thr, over = [], []
         for _ in range(runs):
-            t, _sent = protocol(total, window, loss)
-            vals.append(total / t)
-        return sum(vals) / len(vals)
+            t, sent = protocol(packets, w, loss, delay, timeout)
+            thr.append(packets / t)
+            over.append(sent / packets)
+        return sum(thr) / runs, sum(over) / runs
 
     losses = [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
-    windows = [1, 2, 4, 8, 16, 32]
-    delay, timeout = 5, 12
+    windows = sorted(set([1, 2, 4, 8, 16, 32] + [window]))
 
     def th_sw(p):
         q = (1 - p) ** 2
         return 1 / (2 * delay + (1 - q) / q * timeout)
 
+    sw = [avg(go_back_n, 1, l) for l in losses]
+    gbn = [avg(go_back_n, window, l) for l in losses]
+    sr = [avg(selective_repeat, window, l) for l in losses]
+    wg = [avg(go_back_n, w, window_loss) for w in windows]
+    ws = [avg(selective_repeat, w, window_loss) for w in windows]
     return jsonify({
-        "losses": [l * 100 for l in losses],
-        "loss_gbn": [avg(go_back_n, 100, 8, l) for l in losses],
-        "loss_sr": [avg(selective_repeat, 100, 8, l) for l in losses],
+        "params": {"window": window, "delay": delay, "timeout": timeout, "packets": packets,
+                   "runs": runs, "window_loss": int(round(window_loss * 100)), "bdp": 2 * delay + 1},
+        "warning": "" if timeout > 2 * delay else "Timeout is not larger than 2 x delay, so frames are resent too early and every protocol slows down.",
+        "losses": [int(round(l * 100)) for l in losses],
+        "loss_sw": [x[0] for x in sw], "loss_gbn": [x[0] for x in gbn], "loss_sr": [x[0] for x in sr],
+        "over_sw": [x[1] for x in sw], "over_gbn": [x[1] for x in gbn], "over_sr": [x[1] for x in sr],
+        "over_th": [1 / (1 - l) ** 2 for l in losses],
         "windows": windows,
-        "win_gbn": [avg(go_back_n, 100, w, 0.10) for w in windows],
-        "win_sr": [avg(selective_repeat, 100, w, 0.10) for w in windows],
-        "theory_losses": [l * 100 for l in losses],
-        "sim_sw": [avg(go_back_n, 300, 1, l) for l in losses],
+        "win_gbn": [x[0] for x in wg], "win_sr": [x[0] for x in ws],
         "th_sw": [th_sw(l) for l in losses],
-        "sim_sr": [avg(selective_repeat, 300, 32, l) for l in losses],
         "th_sr": [(1 - l) ** 2 for l in losses],
     })
 
