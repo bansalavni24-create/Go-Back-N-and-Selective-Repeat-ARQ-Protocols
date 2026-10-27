@@ -54,6 +54,9 @@
   .wide{grid-column:1/-1} .wide svg{max-width:640px;display:block;margin:0 auto}
   .legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12.5px;color:var(--muted);justify-content:center}
   .legend i{display:inline-block;width:14px;height:4px;border-radius:2px;margin-right:6px;vertical-align:middle}
+  .errbox{margin-top:8px;font-size:13px;color:var(--bad)} .errbox div{margin-top:2px} .errbox .info{color:var(--muted)}
+  .bad-input{border-color:var(--bad)!important}
+  .scen td{padding:5px 10px;font-size:13px} .scen td:first-child{color:var(--muted);width:44%}
   .hidden{display:none}
   .animlog{font:12.5px/1.55 ui-monospace,Consolas,monospace;background:var(--bg);border-radius:8px;padding:10px;min-height:150px}
   .animlog div{white-space:pre-wrap}
@@ -72,19 +75,20 @@
   <button data-tab="anim">Animation</button>
   <button data-tab="num">Sequence Numbering</button>
   <button data-tab="graphs">Graphs</button>
+  <button data-tab="real">Real-Life</button>
 </nav>
 <main>
 
 <section id="demo">
   <div class="card">
     <div class="row">
-      <label>Your message (max 20 letters)<input id="msg" value="NETWORKS" maxlength="20"></label>
-      <label>Window size<input id="window" type="number" value="3" min="1" max="8"></label>
-      <label>Every k-th frame lost (0 = none)<input id="kth" type="number" value="4" min="0" max="20"></label>
-      <label>Every k-th ACK lost (0 = none)<input id="ackkth" type="number" value="0" min="0" max="20"></label>
-      <label>Random loss % (replaces the k-th rules)<input id="rloss" type="number" value="0" min="0" max="60"></label>
-      <label>Delay (ticks)<input id="delay" type="number" value="2" min="1" max="10"></label>
-      <label>Timeout (ticks)<input id="timeout" type="number" value="6" min="2" max="40"></label>
+      <label>Your message (1-20 letters)<input id="msg" value="NETWORKS" maxlength="20"></label>
+      <label>Window size (1-8)<input id="window" type="number" value="3" min="1" max="8"></label>
+      <label>Every k-th frame lost (0 = none, or 2-20)<input id="kth" type="number" value="4" min="0" max="20"></label>
+      <label>Every k-th ACK lost (0 = none, or 2-20)<input id="ackkth" type="number" value="0" min="0" max="20"></label>
+      <label>Random loss % (0-60, replaces k-th rules)<input id="rloss" type="number" value="0" min="0" max="60"></label>
+      <label>Delay (ticks, 1-10)<input id="delay" type="number" value="2" min="1" max="10"></label>
+      <label>Timeout (ticks, more than 2 x delay, max 40)<input id="timeout" type="number" value="6" min="2" max="40"></label>
       <label>Sequence numbers
         <select id="scheme">
           <option value="safe">Safe modulo (recommended)</option>
@@ -94,6 +98,7 @@
         </select></label>
       <button class="go" id="rundemo">Send message</button>
     </div>
+    <div id="demoErr" class="errbox"></div>
   </div>
   <div id="demoOut" class="msg">Press "Send message" to start.</div>
 </section>
@@ -118,9 +123,10 @@
 <section id="num" class="hidden">
   <div class="card">
     <div class="row">
-      <label>Your message<input id="nmsg" value="NETWORKS" maxlength="20"></label>
+      <label>Your message (1-20 letters)<input id="nmsg" value="NETWORKS" maxlength="20"></label>
       <button class="go" id="runnum">Compare numbering</button>
     </div>
+    <div id="numErr" class="errbox"></div>
     <p class="note">Window 3. Every 4th frame is lost. In the second table every 3rd ACK is lost too.</p>
   </div>
   <div id="numOut" class="msg">Press "Compare numbering" to start.</div>
@@ -129,18 +135,33 @@
 <section id="graphs" class="hidden">
   <div class="card">
     <div class="row">
-      <label>Window size<input id="gwin" type="number" value="8" min="1" max="64"></label>
-      <label>Delay (ticks)<input id="gdelay" type="number" value="5" min="1" max="20"></label>
-      <label>Timeout (ticks)<input id="gtimeout" type="number" value="12" min="2" max="60"></label>
-      <label>Packets sent<input id="gpackets" type="number" value="100" min="20" max="500"></label>
-      <label>Runs per point<input id="gruns" type="number" value="20" min="5" max="100"></label>
-      <label>Loss for window graph (%)<input id="gwloss" type="number" value="10" min="0" max="50"></label>
+      <label>Window size (1-64)<input id="gwin" type="number" value="8" min="1" max="64"></label>
+      <label>Delay (ticks, 1-20)<input id="gdelay" type="number" value="5" min="1" max="20"></label>
+      <label>Timeout (more than 2 x delay, max 60)<input id="gtimeout" type="number" value="12" min="2" max="60"></label>
+      <label>Packets sent (20-500)<input id="gpackets" type="number" value="100" min="20" max="500"></label>
+      <label>Runs per point (5-100)<input id="gruns" type="number" value="20" min="5" max="100"></label>
+      <label>Loss for window graph (0-50 %)<input id="gwloss" type="number" value="10" min="0" max="50"></label>
       <button class="go" id="gcopy" style="background:var(--muted)">Copy from Live Demo</button>
       <button class="go" id="rungraphs">Draw graphs</button>
     </div>
+    <div id="graphErr" class="errbox"></div>
     <p class="note">Graphs use random loss (0% to 30%, frames and ACKs) averaged over many runs. Window, delay and timeout can be copied from the Live Demo form. Takes a few seconds.</p>
   </div>
   <div id="graphOut" class="msg">Press "Draw graphs" to start.</div>
+</section>
+
+<section id="real" class="hidden">
+  <div class="card">
+    <div class="row">
+      <label>Real-life situation<select id="rsc" style="min-width:330px"></select></label>
+      <label>Window size (1-64)<input id="rwin" type="number" value="8" min="1" max="64"></label>
+      <label id="rlosslabel">Typical loss % (0-20)<input id="rloss2" type="number" value="5" min="0" max="30"></label>
+      <button class="go" id="rrun">Compare protocols</button>
+    </div>
+    <div id="rerr" class="errbox"></div>
+    <div id="rstory"></div>
+  </div>
+  <div id="realOut" class="msg">Pick a situation and press "Compare protocols".</div>
 </section>
 
 </main>
@@ -153,8 +174,9 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v.s
 
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
-  ["demo","anim","num","graphs"].forEach(t => $(t).classList.toggle("hidden", t !== b.dataset.tab));
+  ["demo","anim","num","graphs","real"].forEach(t => $(t).classList.toggle("hidden", t !== b.dataset.tab));
   if (b.dataset.tab === "anim") initAnim();
+  if (b.dataset.tab === "real") initReal();
   if (b.dataset.tab === "graphs" && !window.gTouched){ copyDemo(); }
 });
 
@@ -169,8 +191,10 @@ $("rundemo").onclick = async () => {
   const data = await post("/api/demo", {message:$("msg").value, window:$("window").value, every_kth:$("kth").value,
     ack_every_kth:$("ackkth").value, random_loss:$("rloss").value, delay:$("delay").value, timeout:$("timeout").value, scheme:$("scheme").value});
   btn.disabled = false;
+  if (data.errors){ showErr("demoErr", data.errors); return; }
   lastDemo = data; anim.ev = null;
   const maxTime = Math.max(...data.results.map(r => r.time));
+  showErr("demoErr", []);
   let html = `<div class="grid3">`;
   for (const r of data.results){
     const c = COLORS[r.protocol];
@@ -205,6 +229,7 @@ const anim = {T:0, playing:false, speed:1, proto:1, ev:null, raf:0, last:0};
 async function getDemo(){
   const data = await post("/api/demo", {message:$("msg").value, window:$("window").value, every_kth:$("kth").value,
     ack_every_kth:$("ackkth").value, random_loss:$("rloss").value, delay:$("delay").value, timeout:$("timeout").value, scheme:$("scheme").value});
+  if (data.errors){ lastDemo = null; $("animStage").innerHTML = `<div class="msg">Fix the Live Demo settings first: ${esc(data.errors.join("; "))}</div>`; return null; }
   lastDemo = data; anim.ev = null; return data;
 }
 function parseLog(r, proto, window){
@@ -328,7 +353,7 @@ function setProto(){
 }
 async function initAnim(){
   if (!lastDemo) await getDemo();
-  if (!anim.ev) setProto();
+  if (lastDemo && !anim.ev) setProto();
 }
 $("aproto").onchange = () => { if (lastDemo) setProto(); };
 $("aspeed").onchange = e => { anim.speed = +e.target.value; };
@@ -340,7 +365,112 @@ $("aplay").onclick = () => {
 };
 $("astep").onclick = () => { if (!anim.ev) return; anim.playing = false; $("aplay").textContent = "Play"; anim.T = Math.min(anim.ev.end, Math.floor(anim.T) + 1); drawAnim(); };
 $("areset").onclick = () => { if (!anim.ev) return; anim.playing = false; $("aplay").textContent = "Play"; anim.T = 0; drawAnim(); };
-$("arerun").onclick = async () => { anim.playing = false; await getDemo(); setProto(); };
+$("arerun").onclick = async () => { anim.playing = false; await getDemo(); if (lastDemo) setProto(); };
+
+/* ---------- Limits and checks ---------- */
+let LIMITS = null;
+function showErr(id, list, notes = []){
+  $(id).innerHTML = list.map(m => `<div>&#9888; ${esc(m)}</div>`).join("") + notes.map(m => `<div class="info">${esc(m)}</div>`).join("");
+}
+const nErr = (id, label, lo, hi, zeroOk) => {
+  const v = $(id).value.trim();
+  if (!/^\d+$/.test(v)) return {id, msg: `${label} must be a whole number`};
+  const n = +v; if (zeroOk && n === 0) return null;
+  if (n < lo || n > hi) return {id, msg: `${label} must be ${zeroOk ? "0 or " : ""}between ${lo} and ${hi}`};
+  return null;
+};
+const timeoutErr = (dId, tId, errs) => {
+  if (errs.some(e => e.id === dId || e.id === tId)) return;
+  const d = +$(dId).value, t = +$(tId).value;
+  if (t <= 2 * d) errs.push({id: tId, msg: `Timeout must be more than 2 x delay (at least ${2 * d + 1} for delay ${d})`});
+};
+function applyCheck(errId, fields, buttons, errs, notes = []){
+  fields.forEach(f => $(f).classList.toggle("bad-input", errs.some(e => e.id === f)));
+  showErr(errId, errs.map(e => e.msg), notes);
+  buttons.forEach(b => { $(b).disabled = errs.length > 0; });
+}
+const DEMO_FIELDS = ["msg", "window", "kth", "ackkth", "rloss", "delay", "timeout"];
+function checkDemo(){
+  if (!LIMITS) return; const L = LIMITS.demo, m = $("msg").value.trim();
+  const errs = [(m.length < L.message[0] || m.length > L.message[1]) ? {id: "msg", msg: `Message must be ${L.message[0]} to ${L.message[1]} letters`} : null,
+    nErr("window", "Window size", ...L.window), nErr("kth", "Every k-th frame lost", ...L.every_kth, true), nErr("ackkth", "Every k-th ACK lost", ...L.ack_every_kth, true),
+    nErr("rloss", "Random loss %", ...L.random_loss), nErr("delay", "Delay", ...L.delay), nErr("timeout", "Timeout", ...L.timeout)].filter(Boolean);
+  timeoutErr("delay", "timeout", errs);
+  const notes = (+$("rloss").value > 0) ? ["Random loss is on, so the every k-th rules are ignored."] : [];
+  applyCheck("demoErr", DEMO_FIELDS, ["rundemo", "arerun"], errs, notes);
+}
+const GRAPH_FIELDS = ["gwin", "gdelay", "gtimeout", "gpackets", "gruns", "gwloss"];
+function checkGraphs(){
+  if (!LIMITS) return; const L = LIMITS.graphs;
+  const errs = [nErr("gwin", "Window size", ...L.window), nErr("gdelay", "Delay", ...L.delay), nErr("gtimeout", "Timeout", ...L.timeout),
+    nErr("gpackets", "Packets sent", ...L.packets), nErr("gruns", "Runs per point", ...L.runs), nErr("gwloss", "Loss for window graph", ...L.window_loss)].filter(Boolean);
+  timeoutErr("gdelay", "gtimeout", errs);
+  applyCheck("graphErr", GRAPH_FIELDS, ["rungraphs"], errs);
+}
+function checkNum(){
+  const m = $("nmsg").value.trim(), bad = m.length < 1 || m.length > 20;
+  $("nmsg").classList.toggle("bad-input", bad); showErr("numErr", bad ? ["Message must be 1 to 20 letters"] : []); $("runnum").disabled = bad;
+}
+(async () => {
+  LIMITS = await (await fetch("/api/limits")).json();
+  DEMO_FIELDS.forEach(f => $(f).addEventListener("input", checkDemo)); GRAPH_FIELDS.forEach(f => $(f).addEventListener("input", checkGraphs));
+  $("nmsg").addEventListener("input", checkNum); checkDemo(); checkGraphs();
+})();
+
+/* ---------- Real-life situations ---------- */
+let SCEN = [];
+const curScen = () => SCEN.find(x => x.id === $("rsc").value);
+function checkReal(){
+  const s = curScen(); if (!s || !LIMITS) return;
+  const errs = [nErr("rwin", "Window size", ...LIMITS.reallife.window), nErr("rloss2", "Typical loss", 0, s.max_loss)].filter(Boolean);
+  applyCheck("rerr", ["rwin", "rloss2"], ["rrun"], errs);
+}
+function fillScenario(){
+  const s = curScen();
+  $("rwin").value = s.window; $("rloss2").value = s.typical_loss;
+  $("rlosslabel").firstChild.textContent = `Typical loss % (0-${s.max_loss})`;
+  $("rstory").innerHTML = `<p class="note"><b>${esc(s.name)}.</b> ${esc(s.story)}</p>
+    <table class="scen"><tr><td>What is sent</td><td>${esc(s.what)}</td></tr>
+    <tr><td>One tick</td><td>${s.tick_ms} ms</td></tr>
+    <tr><td>One-way delay</td><td>${s.delay} ticks = ${s.delay * s.tick_ms} ms</td></tr>
+    <tr><td>Timeout</td><td>${s.timeout} ticks = ${s.timeout * s.tick_ms} ms</td></tr>
+    <tr><td>Loss range on the graphs</td><td>0% to ${s.max_loss}%</td></tr></table>
+    <p class="note">These are typical values assumed for illustration, not measurements of a real network.</p>`;
+  checkReal();
+}
+async function initReal(){
+  if (SCEN.length) return;
+  SCEN = await (await fetch("/api/scenarios")).json();
+  $("rsc").innerHTML = SCEN.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join("");
+  $("rsc").onchange = fillScenario; ["rwin", "rloss2"].forEach(f => $(f).addEventListener("input", checkReal)); fillScenario();
+}
+const secs = v => v < 10 ? v.toFixed(2) : v.toFixed(1);
+$("rrun").onclick = async () => {
+  const btn = $("rrun"); btn.disabled = true; btn.textContent = "Running...";
+  const r = await post("/api/reallife", {scenario: $("rsc").value, window: $("rwin").value, loss: $("rloss2").value});
+  btn.disabled = false; btn.textContent = "Compare protocols";
+  if (r.errors){ showErr("rerr", r.errors); return; }
+  showErr("rerr", []);
+  const s = r.scenario, keys = [["sw", "Stop-and-Wait"], ["gbn", "Go-Back-N"], ["sr", "Selective Repeat"]];
+  const tmax = Math.max(...keys.map(k => r["typical_" + k[0]].seconds));
+  const best = keys.reduce((a, b) => r["typical_" + a[0]].seconds <= r["typical_" + b[0]].seconds ? a : b);
+  const bs = r["typical_" + best[0]].seconds, ws = tmax, ratio = ws / bs;
+  const swS = r.typical_sw.seconds;
+  const verdict = `<b>${best[1]}</b> is fastest: ${s.messages} messages in ${secs(bs)} s at ${r.typical_loss}% loss. Stop-and-Wait needs ${secs(swS)} s (${(swS / bs).toFixed(1)} times longer). ` +
+    (swS - bs < 1 ? "The difference is under a second here, so a simple protocol is good enough." : "The gap is large here, so the choice of protocol matters a lot.");
+  let h = `<div class="grid3">` + keys.map(k => { const t = r["typical_" + k[0]];
+    return `<div class="card stat" style="--c:${COLORS[k[1]]}"><h3>${k[1]}${k[0] !== "sw" ? " (window " + r.window + ")" : ""}</h3>
+      <div class="big"><div><span>${secs(t.seconds)}</span><small>seconds for ${s.messages} messages</small></div><div><span>${t.frames_per_message.toFixed(2)}</span><small>frames per message</small></div></div>
+      <div class="bar"><i style="width:${100 * t.seconds / tmax}%"></i></div></div>`; }).join("") + `</div>
+    <div class="card"><p style="margin:0">${verdict}</p><p class="note">At ${r.typical_loss}% loss, average of ${r.runs} random runs. Shorter bar = faster.</p></div>
+    <div class="charts"><div class="card" id="rc1"></div><div class="card" id="rc2"></div></div>`;
+  $("realOut").className = ""; $("realOut").innerHTML = h;
+  const labels = r.losses.map(x => x + "%");
+  $("rc1").innerHTML = line(`Time to deliver ${s.messages} messages`, "Packet loss rate (%)", labels,
+    keys.map(k => ({label: k[1], data: r["time_" + k[0]], color: COLORS[k[1]]})), {ytitle: "Seconds"});
+  $("rc2").innerHTML = line("Frames sent per message (waste)", "Packet loss rate (%)", labels,
+    keys.map(k => ({label: k[1], data: r["over_" + k[0]], color: COLORS[k[1]]})), {ytitle: "Frames sent per message"});
+};
 
 /* ---------- Numbering ---------- */
 const tag = s => { const k = s === "never finishes" ? "never" : s; return `<span class="tag t-${k}">${s}</span>`; };
@@ -366,6 +496,8 @@ $("runnum").onclick = async () => {
   const btn = $("runnum"); btn.disabled = true;
   const d = await post("/api/numbering", {message:$("nmsg").value});
   btn.disabled = false;
+  if (d.errors){ showErr("numErr", d.errors); return; }
+  showErr("numErr", []);
   let h = `<div class="card"><h2>1. Only frames are lost (like the exam)</h2>${partTable(d.frames_only)}</div>
     <div class="card"><h2>2. Frames and ACKs are lost</h2>${partTable(d.frames_and_acks)}</div>
     <div class="card"><h2>3. Which modulo is enough?</h2><table><tr><th>Modulo</th>${[1,2,3,4,5,6,7,8].map(m=>`<th>${m}</th>`).join("")}</tr>`;
@@ -408,6 +540,7 @@ $("rungraphs").onclick = async () => {
   const g = await post("/api/graphs", {window:$("gwin").value, delay:$("gdelay").value, timeout:$("gtimeout").value,
     packets:$("gpackets").value, runs:$("gruns").value, window_loss:$("gwloss").value});
   btn.disabled = false; btn.textContent = "Draw graphs again";
+  if (g.errors){ showErr("graphErr", g.errors); return; }
   const p = g.params;
   $("graphOut").className = "";
   $("graphOut").innerHTML = (g.warning ? `<div class="card"><b style="color:var(--warn)">Note:</b> ${g.warning}</div>` : "") + `<div class="charts">
